@@ -9,7 +9,7 @@ const TICK_MS = 50;
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: "http://localhost:3000" },
+  cors: { origin: ["http://localhost:3000", "https://www.v12h.com", "https://v12h.com"] },
 });
 
 const drones = createDrones();
