@@ -8,6 +8,8 @@ export type Telemetry = {
 type Drone = Telemetry & {
   turn: 1 | -1; // +1 right, -1 left
   turnFor: number; // seconds until the turn reverses
+  mode: "fly" | "return" | "pause";
+  pauseFor: number;
 };
 
 const CENTER = {
@@ -24,9 +26,13 @@ const SEEDS = [
 ] as const;
 
 const METERS_PER_DEGREE = 111_320;
+const METERS_PER_MILE = 1_609.344;
 const SPEED_METERS_PER_SECOND = 500;
 const TURN_DEGREES_PER_SECOND = 8;
 const TURN_HOLD_SECONDS = 5;
+const RETURN_MILES = 15;
+const RETURN_DISTANCE_METERS = RETURN_MILES * METERS_PER_MILE;
+const PAUSE_SECONDS = 3;
 
 export function createDrones(): Drone[] {
   return SEEDS.map((seed) => ({
@@ -36,7 +42,32 @@ export function createDrones(): Drone[] {
     heading: seed.heading,
     turn: seed.turn,
     turnFor: seed.turnFor,
+    mode: "fly",
+    pauseFor: 0,
   }));
+}
+
+function distanceFromOrigin(drone: Drone) {
+  const latitude = (drone.latitude * Math.PI) / 180;
+  const north = (drone.latitude - CENTER.latitude) * METERS_PER_DEGREE;
+  const east =
+    (drone.longitude - CENTER.longitude) * METERS_PER_DEGREE * Math.cos(latitude);
+  return Math.hypot(east, north);
+}
+
+function headingTowardOrigin(drone: Drone) {
+  const latitude = (drone.latitude * Math.PI) / 180;
+  const north = CENTER.latitude - drone.latitude;
+  const east = (CENTER.longitude - drone.longitude) * Math.cos(latitude);
+  return ((Math.atan2(east, north) * 180) / Math.PI + 360) % 360;
+}
+
+function move(drone: Drone, meters: number) {
+  const heading = (drone.heading * Math.PI) / 180;
+  const latitude = (drone.latitude * Math.PI) / 180;
+  drone.latitude += (Math.cos(heading) * meters) / METERS_PER_DEGREE;
+  drone.longitude +=
+    (Math.sin(heading) * meters) / (METERS_PER_DEGREE * Math.cos(latitude));
 }
 
 export function stepDrones(drones: Drone[], dtSeconds: number) {
@@ -44,12 +75,33 @@ export function stepDrones(drones: Drone[], dtSeconds: number) {
   const turn = TURN_DEGREES_PER_SECOND * dtSeconds;
 
   for (const drone of drones) {
-    const heading = (drone.heading * Math.PI) / 180;
-    const latitude = (drone.latitude * Math.PI) / 180;
-    drone.latitude += (Math.cos(heading) * meters) / METERS_PER_DEGREE;
-    drone.longitude +=
-      (Math.sin(heading) * meters) /
-      (METERS_PER_DEGREE * Math.cos(latitude));
+    if (drone.mode === "pause") {
+      drone.pauseFor -= dtSeconds;
+      if (drone.pauseFor <= 0) drone.mode = "fly";
+      continue;
+    }
+
+    if (
+      drone.mode === "fly" &&
+      distanceFromOrigin(drone) > RETURN_DISTANCE_METERS
+    ) {
+      drone.mode = "return";
+    }
+
+    if (drone.mode === "return") {
+      drone.heading = headingTowardOrigin(drone);
+      if (distanceFromOrigin(drone) <= meters) {
+        drone.longitude = CENTER.longitude;
+        drone.latitude = CENTER.latitude;
+        drone.mode = "pause";
+        drone.pauseFor = PAUSE_SECONDS;
+        continue;
+      }
+      move(drone, meters);
+      continue;
+    }
+
+    move(drone, meters);
     drone.heading = (drone.heading + drone.turn * turn + 360) % 360;
     drone.turnFor -= dtSeconds;
     if (drone.turnFor <= 0) {
