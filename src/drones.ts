@@ -38,13 +38,37 @@ const CENTER = {
   latitude: 33.693477,
 };
 
-const SEEDS = [
-  { name: "Kestrel", longitude: 0, latitude: 0, heading: 0, turn: 1, turnFor: 5 },
-  { name: "Nimbus", longitude: 0.03, latitude: 0.02, heading: 45, turn: -1, turnFor: 2 },
-  { name: "Osprey", longitude: -0.025, latitude: 0.03, heading: 120, turn: 1, turnFor: 4 },
-  { name: "Quill", longitude: 0.02, latitude: -0.03, heading: 200, turn: -1, turnFor: 1 },
-  { name: "Vesper", longitude: -0.03, latitude: -0.02, heading: 300, turn: 1, turnFor: 3 },
-] as const;
+const FIRST_NAMES = ["Kestrel", "Nimbus", "Osprey", "Quill", "Vesper"];
+
+const NAME_LEFT = [
+  "Ash", "Bay", "Bright", "Calm", "Clear", "Cold", "Copper", "Dawn", "Dusk", "Flint",
+  "Frost", "Gale", "Gold", "Gray", "High", "Iron", "Keen", "Low", "Pale", "Quick",
+  "Red", "Sharp", "Silver", "Still", "Storm", "True", "West", "Wild", "Winter", "Young",
+];
+
+const NAME_RIGHT = [
+  "Falcon", "Condor", "Harrier", "Merlin", "Raven", "Heron", "Petrel", "Tern", "Gannet", "Plover",
+  "Egret", "Lark", "Martin", "Pipit", "Oriole", "Magpie", "Skua", "Hawk", "Eagle", "Owl",
+  "Shrike", "Finch", "Wren", "Kite", "Buzzard", "Crow", "Jay", "Gull", "Ibis", "Auk",
+  "Snipe", "Cygnet", "Bittern", "Curlew", "Gyr",
+];
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+const NAME_CYCLE = (NAME_LEFT.length * NAME_RIGHT.length) / gcd(NAME_LEFT.length, NAME_RIGHT.length);
+
+function droneName(index: number) {
+  if (index < FIRST_NAMES.length) return FIRST_NAMES[index];
+  const n = index - FIRST_NAMES.length;
+  const round = Math.floor(n / NAME_CYCLE);
+  const i = n % NAME_CYCLE;
+  const left = NAME_LEFT[i % NAME_LEFT.length];
+  const right = NAME_RIGHT[i % NAME_RIGHT.length];
+  const name = `${left} ${right}`;
+  return round === 0 ? name : `${name} ${round + 1}`;
+}
 
 function droneId(used: Set<string>) {
   let id = "";
@@ -67,22 +91,27 @@ function startingBattery() {
   return 66 + Math.floor(Math.random() * 35);
 }
 
-export function createDrones(): Drone[] {
+export function createDrones(count: number): Drone[] {
   const used = new Set<string>();
-  return SEEDS.map((seed) => ({
-    id: droneId(used),
-    name: seed.name,
-    longitude: CENTER.longitude + seed.longitude,
-    latitude: CENTER.latitude + seed.latitude,
-    heading: seed.heading,
-    turn: seed.turn,
-    turnFor: seed.turnFor,
-    battery: startingBattery(),
-    batteryUsed: 0,
-    mode: "fly",
-    chargeFor: 0,
-    chargeFrom: 0,
-  }));
+  return Array.from({ length: count }, (_, index) => {
+    const angle = (index / count) * Math.PI * 2;
+    const radius = 0.008 + (index % 10) * 0.0035;
+    const turn: 1 | -1 = index % 2 === 0 ? 1 : -1;
+    return {
+      id: droneId(used),
+      name: droneName(index),
+      longitude: CENTER.longitude + Math.sin(angle) * radius,
+      latitude: CENTER.latitude + Math.cos(angle) * radius,
+      heading: (index * 47) % 360,
+      turn,
+      turnFor: (index % 5) + 1,
+      battery: startingBattery(),
+      batteryUsed: 0,
+      mode: "fly",
+      chargeFor: 0,
+      chargeFrom: 0,
+    };
+  });
 }
 
 function distanceFromOrigin(drone: Drone) {

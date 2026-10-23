@@ -38,7 +38,15 @@ if (!TOKEN) {
   console.warn("TELEMETRY_TOKEN is not set; websocket connections will be rejected");
 }
 
-const drones = createDrones();
+const FLEET_SIZES = new Set([5, 10, 100, 1000]);
+
+const drones = createDrones(5);
+
+function spawn(count: number) {
+  if (drones.length === count) return;
+  drones.splice(0, drones.length, ...createDrones(count));
+  io.emit("telemetry", telemetry(drones));
+}
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, drones: drones.length });
@@ -48,6 +56,10 @@ io.on("connection", (socket) => {
   socket.emit("telemetry", telemetry(drones));
   socket.on("latency", (ack: () => void) => {
     ack();
+  });
+  socket.on("fleet", (count: unknown) => {
+    if (typeof count !== "number" || !FLEET_SIZES.has(count)) return;
+    spawn(count);
   });
 });
 
