@@ -1,49 +1,87 @@
+export type Status = "Patrolling" | "RTB" | "Charging";
+
 export type Telemetry = {
   id: string;
+  name: string;
   longitude: number;
   latitude: number;
   heading: number;
+  battery: number;
+  status: Status;
 };
 
-type Drone = Telemetry & {
+export type Origin = {
+  name: string;
+  place: string;
+  longitude: number;
+  latitude: number;
+};
+
+export type TelemetryFrame = {
+  origin: Origin;
+  drones: Telemetry[];
+};
+
+type Drone = Omit<Telemetry, "status"> & {
   turn: 1 | -1; // +1 right, -1 left
   turnFor: number; // seconds until the turn reverses
-  mode: "fly" | "return" | "pause";
-  pauseFor: number;
+  mode: "fly" | "return" | "charge";
+  batteryUsed: number; // fractional percent drained, not yet taken from battery
+  chargeFor: number;
+  chargeFrom: number;
 };
 
 const CENTER = {
+  name: "Anduril HQ",
+  place: "Costa Mesa",
   longitude: -117.918031,
   latitude: 33.693477,
 };
 
 const SEEDS = [
-  { id: "drone-1", longitude: 0, latitude: 0, heading: 0, turn: 1, turnFor: 5 },
-  { id: "drone-2", longitude: 0.03, latitude: 0.02, heading: 45, turn: -1, turnFor: 2 },
-  { id: "drone-3", longitude: -0.025, latitude: 0.03, heading: 120, turn: 1, turnFor: 4 },
-  { id: "drone-4", longitude: 0.02, latitude: -0.03, heading: 200, turn: -1, turnFor: 1 },
-  { id: "drone-5", longitude: -0.03, latitude: -0.02, heading: 300, turn: 1, turnFor: 3 },
+  { name: "Kestrel", longitude: 0, latitude: 0, heading: 0, turn: 1, turnFor: 5 },
+  { name: "Nimbus", longitude: 0.03, latitude: 0.02, heading: 45, turn: -1, turnFor: 2 },
+  { name: "Osprey", longitude: -0.025, latitude: 0.03, heading: 120, turn: 1, turnFor: 4 },
+  { name: "Quill", longitude: 0.02, latitude: -0.03, heading: 200, turn: -1, turnFor: 1 },
+  { name: "Vesper", longitude: -0.03, latitude: -0.02, heading: 300, turn: 1, turnFor: 3 },
 ] as const;
 
+function droneId(used: Set<string>) {
+  let id = "";
+  do {
+    id = String(10_000_000 + Math.floor(Math.random() * 90_000_000));
+  } while (used.has(id));
+  used.add(id);
+  return id;
+}
+
 const METERS_PER_DEGREE = 111_320;
-const METERS_PER_MILE = 1_609.344;
-const SPEED_METERS_PER_SECOND = 500;
+const SPEED_METERS_PER_SECOND = 100;
 const TURN_DEGREES_PER_SECOND = 8;
 const TURN_HOLD_SECONDS = 5;
-const RETURN_MILES = 15;
-const RETURN_DISTANCE_METERS = RETURN_MILES * METERS_PER_MILE;
-const PAUSE_SECONDS = 3;
+const BATTERY_DRAIN_PER_SECOND = 1;
+const RETURN_BATTERY = 60;
+const CHARGE_SECONDS = 3;
+
+function startingBattery() {
+  return 66 + Math.floor(Math.random() * 35);
+}
 
 export function createDrones(): Drone[] {
+  const used = new Set<string>();
   return SEEDS.map((seed) => ({
-    id: seed.id,
+    id: droneId(used),
+    name: seed.name,
     longitude: CENTER.longitude + seed.longitude,
     latitude: CENTER.latitude + seed.latitude,
     heading: seed.heading,
     turn: seed.turn,
     turnFor: seed.turnFor,
+    battery: startingBattery(),
+    batteryUsed: 0,
     mode: "fly",
-    pauseFor: 0,
+    chargeFor: 0,
+    chargeFrom: 0,
   }));
 }
 
@@ -62,6 +100,14 @@ function headingTowardOrigin(drone: Drone) {
   return ((Math.atan2(east, north) * 180) / Math.PI + 360) % 360;
 }
 
+function drainBattery(drone: Drone, dtSeconds: number) {
+  drone.batteryUsed += BATTERY_DRAIN_PER_SECOND * dtSeconds;
+  const lost = Math.floor(drone.batteryUsed);
+  if (lost <= 0) return;
+  drone.battery = Math.max(0, drone.battery - lost);
+  drone.batteryUsed -= lost;
+}
+
 function move(drone: Drone, meters: number) {
   const heading = (drone.heading * Math.PI) / 180;
   const latitude = (drone.latitude * Math.PI) / 180;
@@ -75,16 +121,20 @@ export function stepDrones(drones: Drone[], dtSeconds: number) {
   const turn = TURN_DEGREES_PER_SECOND * dtSeconds;
 
   for (const drone of drones) {
-    if (drone.mode === "pause") {
-      drone.pauseFor -= dtSeconds;
-      if (drone.pauseFor <= 0) drone.mode = "fly";
+    if (drone.mode === "charge") {
+      drone.chargeFor -= dtSeconds;
+      const charged = Math.min(1, 1 - drone.chargeFor / CHARGE_SECONDS);
+      drone.battery = Math.round(drone.chargeFrom + (100 - drone.chargeFrom) * charged);
+      if (drone.chargeFor <= 0) {
+        drone.battery = 100;
+        drone.batteryUsed = 0;
+        drone.mode = "fly";
+      }
       continue;
     }
 
-    if (
-      drone.mode === "fly" &&
-      distanceFromOrigin(drone) > RETURN_DISTANCE_METERS
-    ) {
+    drainBattery(drone, dtSeconds);
+    if (drone.mode === "fly" && drone.battery <= RETURN_BATTERY) {
       drone.mode = "return";
     }
 
@@ -93,8 +143,9 @@ export function stepDrones(drones: Drone[], dtSeconds: number) {
       if (distanceFromOrigin(drone) <= meters) {
         drone.longitude = CENTER.longitude;
         drone.latitude = CENTER.latitude;
-        drone.mode = "pause";
-        drone.pauseFor = PAUSE_SECONDS;
+        drone.mode = "charge";
+        drone.chargeFor = CHARGE_SECONDS;
+        drone.chargeFrom = drone.battery;
         continue;
       }
       move(drone, meters);
@@ -111,11 +162,22 @@ export function stepDrones(drones: Drone[], dtSeconds: number) {
   }
 }
 
-export function telemetry(drones: Drone[]): Telemetry[] {
-  return drones.map(({ id, longitude, latitude, heading }) => ({
-    id,
-    longitude,
-    latitude,
-    heading,
-  }));
+export function telemetry(drones: Drone[]): TelemetryFrame {
+  return {
+    origin: {
+      name: CENTER.name,
+      place: CENTER.place,
+      longitude: CENTER.longitude,
+      latitude: CENTER.latitude,
+    },
+    drones: drones.map((drone) => ({
+      id: drone.id,
+      name: drone.name,
+      longitude: drone.longitude,
+      latitude: drone.latitude,
+      heading: drone.heading,
+      battery: drone.battery,
+      status: drone.mode === "charge" ? "Charging" : drone.mode === "return" ? "RTB" : "Patrolling",
+    })),
+  };
 }

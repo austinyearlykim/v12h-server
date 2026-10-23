@@ -20,6 +20,9 @@ app.get("/health", (_req, res) => {
 
 io.on("connection", (socket) => {
   socket.emit("telemetry", telemetry(drones));
+  socket.on("latency", (ack: () => void) => {
+    ack();
+  });
 });
 
 setInterval(() => {
